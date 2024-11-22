@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { db } from "@/lib/firebase"
 import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, orderBy } from "firebase/firestore"
+import { QuerySnapshot, DocumentData, FirestoreError } from 'firebase/firestore'
 
 interface Todo {
   id: string
@@ -30,6 +31,17 @@ function Footer() {
   )
 }
 
+function ErrorDisplay({ message }: { message: string }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
+        <strong className="font-bold">Error: </strong>
+        <span className="block sm:inline">{message}</span>
+      </div>
+    </div>
+  )
+}
+
 export default function TodoList() {
   const [todos, setTodos] = useState<Todo[]>([])
   const [newTodo, setNewTodo] = useState("")
@@ -37,28 +49,45 @@ export default function TodoList() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
+  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
-    setIsLoading(true)
-    const q = query(collection(db, "todos"), orderBy("createdAt", "desc"))
-    const unsubscribe = onSnapshot(q, 
-      (snapshot) => {
-        const todosData = snapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        })) as Todo[]
-        setTodos(todosData)
-        setIsLoading(false)
-      },
-      (error) => {
-        console.error("Error fetching todos:", error)
-        setError("Failed to load todos")
-        setIsLoading(false)
-      }
-    )
+    if (!db) {
+      console.error('Firebase DB not initialized');
+      setInitError("Firebase database not initialized properly");
+      return;
+    }
 
-    return () => unsubscribe()
-  }, [])
+    setIsLoading(true);
+    try {
+      const q = query(collection(db, "todos"), orderBy("createdAt", "desc"));
+      const unsubscribe = onSnapshot(q, 
+        (snapshot: QuerySnapshot<DocumentData>) => {
+          const todosData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          })) as Todo[];
+          setTodos(todosData);
+          setIsLoading(false);
+        },
+        (error: FirestoreError) => {
+          console.error("Firestore error:", error);
+          setError(`Failed to load todos: ${error.message}`);
+          setIsLoading(false);
+        }
+      );
+
+      return () => unsubscribe();
+    } catch (err) {
+      console.error("Error setting up Firebase listener:", err);
+      setError("Failed to connect to database");
+      setIsLoading(false);
+    }
+  }, []);
+
+  if (initError) {
+    return <ErrorDisplay message={initError} />;
+  }
 
   const addTodo = async () => {
     if (newTodo.trim() !== "") {
@@ -69,7 +98,8 @@ export default function TodoList() {
           createdAt: new Date()
         })
         setNewTodo("")
-      } catch (error) {
+      } catch (err: unknown) {
+        const error = err as FirestoreError
         setError("Failed to add todo")
         console.error("Error adding todo:", error)
       }
@@ -92,7 +122,8 @@ export default function TodoList() {
         updatedAt: new Date()
       })
       setEditingId(null)
-    } catch (error) {
+    } catch (err: unknown) {
+      const error = err as FirestoreError
       setError("Failed to update todo")
       console.error("Error updating todo:", error)
     }
@@ -100,8 +131,11 @@ export default function TodoList() {
 
   const deleteTodo = async (id: string) => {
     try {
+      setError(null)
       await deleteDoc(doc(db, "todos", id))
-    } catch (error) {
+    } catch (err: unknown) {
+      const error = err as FirestoreError
+      setError("Failed to delete todo")
       console.error("Error deleting todo:", error)
     }
   }
